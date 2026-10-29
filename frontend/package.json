@@ -1,0 +1,34 @@
+{
+  "name": "merchpilot-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0 --webpack",
+    "build": "next build --webpack",
+    "start": "next start --hostname 0.0.0.0",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ant-design/charts": "^2.6.0",
+    "@ant-design/icons": "^6.1.0",
+    "@ant-design/nextjs-registry": "^1.1.0",
+    "@antv/x6": "^2.18.1",
+    "@reduxjs/toolkit": "^2.8.0",
+    "antd": "^6.6.0",
+    "axios": "^1.12.0",
+    "next": "16.2.11",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-redux": "^9.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "16.2.11",
+    "typescript": "^5.9.0"
+  },
+  "packageManager": "pnpm@10.14.0"
+}

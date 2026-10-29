@@ -1,0 +1,482 @@
+# 文件职责：编排 MerchPilot 本地全量服务，形成 Web、API、Worker、模型、PostgreSQL、Redis 和 Milvus 闭环。
+
+name: merchpilot
+
+# 后端、模型和 FastMCP 使用独立镜像，避免模型依赖拖慢普通 API 构建。
+x-backend-build: &backend-build
+  context: ./backend
+  dockerfile: Dockerfile
+  args:
+    PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-180}
+
+x-model-build: &model-build
+  context: ./backend
+  dockerfile: Dockerfile.model
+  args:
+    PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-180}
+    PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+    TORCH_VERSION: ${TORCH_VERSION:-2.7.1}
+
+x-mcp-build: &mcp-build
+  context: ./backend
+  dockerfile: Dockerfile.mcp
+  args:
+    PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-180}
+
+# API、Worker、模型服务和 FastMCP 共享同一组业务配置，减少环境漂移。
+x-backend-environment: &backend-environment
+  APP_ENV: ${APP_ENV:-development}
+  APP_DEBUG: ${APP_DEBUG:-false}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001}
+  DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://merchpilot:merchpilot@postgres:5432/merchpilot}
+  DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-20}
+  DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-30}
+  DATABASE_POOL_TIMEOUT_SECONDS: ${DATABASE_POOL_TIMEOUT_SECONDS:-30}
+  DATABASE_POOL_RECYCLE_SECONDS: ${DATABASE_POOL_RECYCLE_SECONDS:-1800}
+  DATABASE_SLOW_QUERY_THRESHOLD_MS: ${DATABASE_SLOW_QUERY_THRESHOLD_MS:-500}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-mp}
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+  RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-600}
+  RATE_LIMIT_TENANT_REQUESTS: ${RATE_LIMIT_TENANT_REQUESTS:-5000}
+  RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+  RATE_LIMIT_FAIL_OPEN: ${RATE_LIMIT_FAIL_OPEN:-true}
+  REDIS_LOCK_TIMEOUT_SECONDS: ${REDIS_LOCK_TIMEOUT_SECONDS:-900}
+  CHECKPOINT_TTL_SECONDS: ${CHECKPOINT_TTL_SECONDS:-604800}
+  CHECKPOINT_HISTORY_LIMIT: ${CHECKPOINT_HISTORY_LIMIT:-20}
+  RUN_EVENT_STREAM_MAXLEN: ${RUN_EVENT_STREAM_MAXLEN:-2000}
+  DISTRIBUTED_LOCK_FAIL_OPEN: ${DISTRIBUTED_LOCK_FAIL_OPEN:-true}
+  PROJECT_DISTRIBUTED_LOCK_ENABLED: ${PROJECT_DISTRIBUTED_LOCK_ENABLED:-true}
+  RUN_DISTRIBUTED_LOCK_ENABLED: ${RUN_DISTRIBUTED_LOCK_ENABLED:-true}
+  AGENT_DISTRIBUTED_LOCK_ENABLED: ${AGENT_DISTRIBUTED_LOCK_ENABLED:-true}
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+  AGENT_NODE_MAX_ATTEMPTS: ${AGENT_NODE_MAX_ATTEMPTS:-3}
+  AGENT_NODE_RETRY_BASE_SECONDS: ${AGENT_NODE_RETRY_BASE_SECONDS:-1}
+  APPROVAL_SLA_HOURS: ${APPROVAL_SLA_HOURS:-24}
+  MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
+  MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+  MILVUS_COLLECTION_NAME: ${MILVUS_COLLECTION_NAME:-merchpilot_evidence_hybrid_v2}
+  MILVUS_HYBRID_SEARCH_ENABLED: ${MILVUS_HYBRID_SEARCH_ENABLED:-true}
+  MILVUS_DENSE_WEIGHT: ${MILVUS_DENSE_WEIGHT:-0.65}
+  MILVUS_SPARSE_WEIGHT: ${MILVUS_SPARSE_WEIGHT:-0.35}
+  EMBEDDING_SERVICE_URL: ${EMBEDDING_SERVICE_URL:-http://embedding-service:8100}
+  RERANKER_SERVICE_URL: ${RERANKER_SERVICE_URL:-http://reranker-service:8100}
+  RETRIEVAL_TIMEOUT_SECONDS: ${RETRIEVAL_TIMEOUT_SECONDS:-3}
+  MODEL_SERVICE_TIMEOUT_SECONDS: ${MODEL_SERVICE_TIMEOUT_SECONDS:-120}
+  EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}
+  EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
+  EMBEDDING_INFERENCE_BATCH_SIZE: ${EMBEDDING_INFERENCE_BATCH_SIZE:-1}
+  EMBEDDING_MAX_LENGTH: ${EMBEDDING_MAX_LENGTH:-512}
+  MODEL_DTYPE: ${MODEL_DTYPE:-auto}
+  MODEL_CPU_THREADS: ${MODEL_CPU_THREADS:-2}
+  MAX_IMPORT_FILE_BYTES: ${MAX_IMPORT_FILE_BYTES:-52428800}
+  MULTIMODAL_MAX_PAGES: ${MULTIMODAL_MAX_PAGES:-50}
+  MULTIMODAL_MAX_IMAGE_BYTES: ${MULTIMODAL_MAX_IMAGE_BYTES:-8388608}
+  DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-qwen-plus}
+  LLM_MULTIMODAL_MODEL: ${LLM_MULTIMODAL_MODEL:-qwen-vl-max}
+  LLM_BASE_URL: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.1}
+  LOCAL_STORAGE_PATH: ${LOCAL_STORAGE_PATH:-/data/files}
+  OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER:-local}
+  AUTH_MODE: ${AUTH_MODE:-local}
+  ALLOW_INSECURE_LOCAL_AUTH: ${ALLOW_INSECURE_LOCAL_AUTH:-false}
+  LOCAL_AUTH_USER_ID: ${LOCAL_AUTH_USER_ID:-local-user}
+  LOCAL_AUTH_TENANT_ID: ${LOCAL_AUTH_TENANT_ID:-default}
+  LOCAL_AUTH_ROLES: ${LOCAL_AUTH_ROLES:-admin}
+  LOCAL_AUTH_PROFILES: ${LOCAL_AUTH_PROFILES:-admin,planner,approver,viewer}
+  DEMO_WORKSPACE_ENABLED: ${DEMO_WORKSPACE_ENABLED:-true}
+  EXTERNAL_APPROVAL_PROVIDER: ${EXTERNAL_APPROVAL_PROVIDER:-internal}
+  TELEMETRY_PROVIDER: ${TELEMETRY_PROVIDER:-console}
+  MCP_INTERNAL_BASE_URL: ${MCP_INTERNAL_BASE_URL:-http://mcp:8001}
+  MCP_PUBLIC_BASE_URL: ${MCP_PUBLIC_BASE_URL:-http://localhost:8001}
+  MCP_PATH: ${MCP_PATH:-/mcp}
+  MCP_REQUEST_TIMEOUT_SECONDS: ${MCP_REQUEST_TIMEOUT_SECONDS:-30}
+  MODEL_SERVICE_MAX_CONCURRENCY: ${MODEL_SERVICE_MAX_CONCURRENCY:-1}
+  MODEL_SERVICE_QUEUE_TIMEOUT_SECONDS: ${MODEL_SERVICE_QUEUE_TIMEOUT_SECONDS:-2}
+  MODEL_SERVICE_FAILURE_THRESHOLD: ${MODEL_SERVICE_FAILURE_THRESHOLD:-5}
+  MODEL_SERVICE_CIRCUIT_OPEN_SECONDS: ${MODEL_SERVICE_CIRCUIT_OPEN_SECONDS:-30}
+  API_WORKERS: ${API_WORKERS:-2}
+  API_KEEPALIVE_SECONDS: ${API_KEEPALIVE_SECONDS:-5}
+
+services:
+  # PostgreSQL 保存租户业务事实、审批、运行快照、审计和幂等账本。
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-merchpilot}
+      POSTGRES_USER: ${POSTGRES_USER:-merchpilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-merchpilot}
+      TZ: Asia/Shanghai
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-merchpilot} -d ${POSTGRES_DB:-merchpilot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # Redis 提供 Celery 消息、运行检查点、事件流和短期状态缓存。
+  redis:
+    image: ${REDIS_IMAGE:-redis:8.2-alpine}
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # Milvus 使用 etcd 保存元数据，并用 MinIO 保存本地对象数据。
+  etcd:
+    image: ${ETCD_IMAGE:-quay.io/coreos/etcd:v3.5.25}
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command:
+      - etcd
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --data-dir=/etcd
+    volumes:
+      - etcd-data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2024-12-18T13-15-44Z}
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: minio server /minio_data
+    volumes:
+      - minio-data:/minio_data
+    restart: unless-stopped
+
+  # Milvus 保存业务证据向量，支持市场、竞品和用户洞察 Agent 语义检索。
+  milvus:
+    image: ${MILVUS_IMAGE:-milvusdb/milvus:v3.0.0}
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    ports:
+      - "${MILVUS_HOST_PORT:-19532}:19530"
+      - "${MILVUS_METRICS_HOST_PORT:-9092}:9091"
+    volumes:
+      - milvus-data:/var/lib/milvus
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9091/healthz >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
+  # 迁移服务必须成功退出后 API 和 Worker 才启动，防止新代码访问旧表结构。
+  migrate:
+    build: *backend-build
+    environment: *backend-environment
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # FastAPI 通过可配置的多进程 Worker 承载 REST、WebSocket、身份和审批接口。
+  api:
+    build: *backend-build
+    environment:
+      <<: *backend-environment
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+    command:
+      - sh
+      - -c
+      - >-
+        rm -rf /tmp/prometheus/* && mkdir -p /tmp/prometheus &&
+        exec uvicorn merchpilot.main:app --host 0.0.0.0 --port 8000
+        --workers $${API_WORKERS:-2} --timeout-keep-alive $${API_KEEPALIVE_SECONDS:-5}
+    ports:
+      - "${API_HOST_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - local-files:/data/files
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Prometheus 汇总 API、模型服务和拆分 Worker 的运行指标。
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # 规划与 Agent 队列独立扩展，避免导入高峰阻塞核心规划审批。
+  worker-planning:
+    build: *backend-build
+    environment:
+      <<: *backend-environment
+      WORKER_METRICS_PORT: 9108
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+    command:
+      - sh
+      - -c
+      - >-
+        rm -rf /tmp/prometheus/* && mkdir -p /tmp/prometheus &&
+        python -m merchpilot.observability.worker_metrics &
+        exec celery -A merchpilot.infrastructure.celery_app:celery_app worker
+        --loglevel=INFO --queues=planning.high,planning.normal,planning.low,agent.research,agent.concept,agent.supplier,agent.finance,agent.scoring,agent.review
+        --concurrency=$${PLANNING_WORKER_CONCURRENCY:-2}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A merchpilot.infrastructure.celery_app:celery_app inspect ping -d celery@$$HOSTNAME --timeout=5 | grep -q pong
+      interval: 15s
+      timeout: 8s
+      retries: 12
+      start_period: 15s
+    expose:
+      - "9108"
+    volumes:
+      - local-files:/data/files
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      embedding-service:
+        condition: service_healthy
+      reranker-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # 导入、Embedding、Milvus 索引独立扩展，允许高吞吐数据处理而不抢占规划 Worker。
+  worker-index:
+    build: *backend-build
+    environment:
+      <<: *backend-environment
+      WORKER_METRICS_PORT: 9108
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+    command:
+      - sh
+      - -c
+      - >-
+        rm -rf /tmp/prometheus/* && mkdir -p /tmp/prometheus &&
+        python -m merchpilot.observability.worker_metrics &
+        exec celery -A merchpilot.infrastructure.celery_app:celery_app worker
+        --loglevel=INFO --queues=index.parse,index.embedding,index.milvus
+        --concurrency=$${INDEX_WORKER_CONCURRENCY:-1}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A merchpilot.infrastructure.celery_app:celery_app inspect ping -d celery@$$HOSTNAME --timeout=5 | grep -q pong
+      interval: 15s
+      timeout: 8s
+      retries: 12
+      start_period: 15s
+    expose:
+      - "9108"
+    volumes:
+      - local-files:/data/files
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      embedding-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # 报告、通知和维护队列独立扩展，避免后台批处理影响在线 API。
+  worker-report:
+    build: *backend-build
+    environment:
+      <<: *backend-environment
+      WORKER_METRICS_PORT: 9108
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+    command:
+      - sh
+      - -c
+      - >-
+        rm -rf /tmp/prometheus/* && mkdir -p /tmp/prometheus &&
+        python -m merchpilot.observability.worker_metrics &
+        exec celery -A merchpilot.infrastructure.celery_app:celery_app worker
+        --loglevel=INFO --queues=report.generate,notification.send,maintenance
+        --concurrency=$${REPORT_WORKER_CONCURRENCY:-2}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A merchpilot.infrastructure.celery_app:celery_app inspect ping -d celery@$$HOSTNAME --timeout=5 | grep -q pong
+      interval: 15s
+      timeout: 8s
+      retries: 12
+      start_period: 15s
+    expose:
+      - "9108"
+    volumes:
+      - local-files:/data/files
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # FastMCP 只转发已受 REST 业务规则保护的能力，不另建一套业务逻辑。
+  mcp:
+    build: *mcp-build
+    environment:
+      <<: *backend-environment
+      MCP_API_BASE_URL: ${MCP_API_BASE_URL:-http://api:8000/api/v1}
+    command: ["uvicorn", "merchpilot.mcp.server:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "${MCP_HOST_PORT:-8001}:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # 两个模型服务分进程部署，避免向量与重排模型争用 API 进程资源。
+  embedding-service:
+    build: *model-build
+    environment:
+      <<: *backend-environment
+      MODEL_SERVICE_ROLE: embedding
+      EMBEDDING_MODEL_PATH: ${EMBEDDING_MODEL_PATH:-/models/bge-m3}
+      EMBEDDING_MODEL_VERSION: ${EMBEDDING_MODEL_VERSION:-bge-m3-local-v1}
+      MODEL_DEVICE: ${MODEL_DEVICE:-auto}
+    command: ["uvicorn", "merchpilot.model_service.main:app", "--host", "0.0.0.0", "--port", "8100"]
+    ports:
+      - "${EMBEDDING_HOST_PORT:-8110}:8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3).read()"]
+      interval: 15s
+      timeout: 8s
+      retries: 20
+      start_period: 90s
+    volumes:
+      - type: bind
+        source: ${MODEL_ROOT:-./models}
+        target: /models
+        read_only: true
+    restart: unless-stopped
+
+  reranker-service:
+    build: *model-build
+    environment:
+      <<: *backend-environment
+      MODEL_SERVICE_ROLE: reranker
+      RERANKER_MODEL_PATH: ${RERANKER_MODEL_PATH:-/models/bge-reranker-large}
+      RERANKER_MODEL_VERSION: ${RERANKER_MODEL_VERSION:-bge-reranker-large-local-v1}
+      RERANKER_BATCH_SIZE: ${RERANKER_BATCH_SIZE:-8}
+      RERANKER_MAX_LENGTH: ${RERANKER_MAX_LENGTH:-512}
+      MODEL_DEVICE: ${MODEL_DEVICE:-auto}
+    command: ["uvicorn", "merchpilot.model_service.main:app", "--host", "0.0.0.0", "--port", "8100"]
+    ports:
+      - "${RERANKER_HOST_PORT:-8111}:8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3).read()"]
+      interval: 15s
+      timeout: 8s
+      retries: 20
+    volumes:
+      - type: bind
+        source: ${MODEL_ROOT:-./models}
+        target: /models
+        read_only: true
+    restart: unless-stopped
+
+  # Next.js standalone 镜像只依赖 API 和浏览器可访问的服务地址。
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+        NEXT_PUBLIC_WS_BASE_URL: ${NEXT_PUBLIC_WS_BASE_URL:-ws://localhost:8000}
+    ports:
+      - "${WEB_HOST_PORT:-3001}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+# 命名卷保留数据库、向量库、对象和用户上传文件，容器重建后数据不丢失。
+volumes:
+  postgres-data:
+  redis-data:
+  etcd-data:
+  minio-data:
+  milvus-data:
+  local-files:
+  prometheus-data:

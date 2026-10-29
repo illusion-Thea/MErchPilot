@@ -1,0 +1,92 @@
+# 文件职责：声明后端构建元数据、运行/开发依赖及 pytest、Ruff、Mypy 质量规则。
+
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "merchpilot-backend"
+version = "0.1.0"
+description = "MerchPilot enterprise merchandising planning platform"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "asyncpg>=0.30,<1",
+  "alembic>=1.16,<2",
+  "celery[redis]>=5.5,<6",
+  "cryptography>=45,<47",
+  "fastapi>=0.116,<1",
+  "greenlet>=3.1,<4",
+  "httpx>=0.28,<1",
+  "langchain>=0.3,<2",
+  "langchain-openai>=0.3,<2",
+  "langgraph>=0.6,<2",
+  "orjson>=3.10,<4",
+  "openpyxl>=3.1,<4",
+  "pillow>=10,<13",
+  "pandas>=2.3,<4",
+  "pydantic-settings>=2.10,<3",
+  "psycopg[binary]>=3.2,<4",
+  "prometheus-client>=0.22,<1",
+  "pymilvus>=2.6,<4",
+  "pymupdf>=1.24,<2",
+  "python-multipart>=0.0.20,<1",
+  "python-docx>=1.1,<2",
+  "python-pptx>=1,<2",
+  "redis>=6,<8",
+  "sqlalchemy>=2.0,<3",
+  "structlog>=25,<26",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+# 可选依赖把 FastMCP、模型推理和开发工具从普通 API 运行环境中拆开。
+[project.optional-dependencies]
+mcp = [
+  "fastmcp==4.0.1",
+]
+models = [
+  "langchain-huggingface>=0.3,<2",
+  "sentencepiece>=0.2,<1",
+  "sentence-transformers>=5,<6",
+  "torch>=2.7,<3",
+  "transformers>=4.53,<5",
+]
+dev = [
+  "fastmcp==4.0.1",
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1,<2",
+  "pytest-cov>=6,<8",
+  "ruff>=0.12,<1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# 集成测试显式打标，普通质量门禁不会误连接开发数据库。
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+  "integration: requires the isolated PostgreSQL integration-test database",
+]
+
+# Ruff 与 Mypy 对一方源码实施 Python 3.12 严格静态检查。
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+files = ["src/merchpilot"]
+
+[[tool.mypy.overrides]]
+module = ["merchpilot.workers.tasks"]
+disallow_untyped_decorators = false

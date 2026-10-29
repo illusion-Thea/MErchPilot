@@ -1,0 +1,57 @@
+# MerchPilot Python environment dependencies.
+#
+# Supported Python versions: >=3.12,<3.14
+# This file mirrors backend/pyproject.toml and is intended for local
+# development, learning, FastMCP integration, model inference and testing.
+# Frontend dependencies remain managed by frontend/package.json and
+# frontend/pnpm-lock.yaml.
+
+# Core runtime: database, API, async tasks and configuration.
+asyncpg>=0.30,<1
+alembic>=1.16,<2
+celery[redis]>=5.5,<6
+cryptography>=45,<47
+fastapi>=0.116,<1
+greenlet>=3.1,<4
+httpx>=0.28,<1
+orjson>=3.10,<4
+openpyxl>=3.1,<4
+pillow>=10,<13
+pandas>=2.3,<4
+pydantic-settings>=2.10,<3
+psycopg[binary]>=3.2,<4
+prometheus-client>=0.22,<1
+pymilvus>=2.6,<4
+pymupdf>=1.24,<2
+python-multipart>=0.0.20,<1
+python-docx>=1.1,<2
+python-pptx>=1,<2
+redis>=6,<8
+sqlalchemy>=2.0,<3
+structlog>=25,<26
+uvicorn[standard]>=0.35,<1
+
+# LangChain and LangGraph orchestration.
+langchain>=0.3,<2
+langchain-openai>=0.3,<2
+langgraph>=0.6,<2
+
+# FastMCP enterprise Agent integration.
+fastmcp==4.0.1
+
+# Embedding and reranker model services.
+langchain-huggingface>=0.3,<2
+sentencepiece>=0.2,<1
+sentence-transformers>=5,<6
+torch>=2.7,<3
+transformers>=4.53,<5
+
+# Local quality gate and tests.
+mypy>=1.17,<2
+pytest>=8.4,<9
+pytest-asyncio>=1,<2
+pytest-cov>=6,<8
+ruff>=0.12,<1
+
+# Install the local backend package after installing this dependency set:
+# python -m pip install -e ./backend

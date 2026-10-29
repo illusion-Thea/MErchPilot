@@ -1,0 +1,51 @@
+# 文件职责：覆盖生产式 Compose 配置，为本地开发启用热更新、源码挂载和调试模式。
+
+services:
+  # API 与 FastMCP 使用 Uvicorn reload；Worker 直接读取挂载后的后端源码。
+  api:
+    environment:
+      APP_ENV: development
+      APP_DEBUG: "true"
+      AUTH_MODE: local
+      ALLOW_INSECURE_LOCAL_AUTH: "false"
+    command: ["uvicorn", "merchpilot.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./backend/src:/app/src
+      - local-files:/data/files
+
+  worker-planning:
+    volumes:
+      - ./backend/src:/app/src
+      - local-files:/data/files
+
+  worker-index:
+    volumes:
+      - ./backend/src:/app/src
+      - local-files:/data/files
+
+  worker-report:
+    volumes:
+      - ./backend/src:/app/src
+      - local-files:/data/files
+
+  mcp:
+    command: ["uvicorn", "merchpilot.mcp.server:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+    volumes:
+      - ./backend/src:/app/src
+
+  # 前端挂载源码，但把 node_modules 与 .next 放在命名卷中避免宿主机差异。
+  web:
+    build:
+      target: development
+    environment:
+      NODE_ENV: development
+    command: ["pnpm", "dev"]
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+      - frontend-next:/app/.next
+
+# 开发专用缓存卷可减少重复安装依赖和重新构建页面缓存。
+volumes:
+  frontend-node-modules:
+  frontend-next:

@@ -1,0 +1,21 @@
+# 文件职责：抓取 MerchPilot API、模型服务和拆分 Worker 的 Prometheus 指标。
+
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: merchpilot-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+
+  - job_name: merchpilot-models
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["embedding-service:8100", "reranker-service:8100"]
+
+  - job_name: merchpilot-workers
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["worker-planning:9108", "worker-index:9108", "worker-report:9108"]

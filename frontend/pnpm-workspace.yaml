@@ -1,0 +1,5 @@
+# 文件职责：声明 pnpm 工作区构建脚本白名单，避免依赖安装时静默执行未知原生构建。
+
+allowBuilds:
+  sharp: set this to true or false
+  unrs-resolver: set this to true or false
